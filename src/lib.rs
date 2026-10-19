@@ -162,6 +162,32 @@
 //! tenant membership, analytics) belong, without authery needing a hook for
 //! each.
 //!
+//! ## Store errors
+//!
+//! Your `Error` type implements
+//! [`StoreError`](store::StoreError). Authery renders it, and by default
+//! renders nothing of it: a store failure is logged in full through
+//! `tracing` at error level and reaches the client as a generic `500` -
+//! `{"error": "Internal server error"}` for API clients, the error page for
+//! browsers. Connection strings, SQL and row contents never hit the wire.
+//!
+//! Opt individual variants in by returning a
+//! [`PublicError`](store::PublicError), whose status and message are used
+//! as given (statuses outside `400..=599` fall back to `500`):
+//!
+//! ```rust,ignore
+//! impl StoreError for MyStoreError {
+//!     fn public(&self) -> Option<PublicError> {
+//!         match self {
+//!             MyStoreError::AddressInUse(_) => Some(PublicError::new(409, self)),
+//!             _ => None,
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! An empty `impl StoreError for MyStoreError {}` is the safe default.
+//!
 //! # Login methods
 //!
 //! ## Passwords (`password`)
@@ -301,26 +327,133 @@
 //! riding `?error=` query params. Send `Accept: application/json` and the
 //! transport layer translates every flow redirect uniformly instead:
 //!
-//! - `200` `FlowResult` - `{"next": "..."}` on success (plus `"message"`
-//!   when one rides along)
-//! - `422` `FlowError` - `{"error": "...", "next": "..."}` on flow errors
+//! - `200` [`FlowResult`](axum::response::FlowResult) - `{"next": "..."}` on success (plus `"message"` when one rides along)
+//! - `422` [`FlowError`](axum::response::FlowError) - `{"error": "...", "next": "..."}` on flow errors
 //!
-//! Store failures use the same switch and render as `ApiError` -
-//! `{"error": "..."}`. Cookies and the `X-Auth-Token` header behave
-//! identically, so a mobile client logs in by POSTing the same form with
-//! the JSON accept header, keeps the token, and sends it as
-//! `Authorization: Bearer` from then on.
+//! Store failures use the same switch and render as
+//! [`ApiError`](axum::response::ApiError) - `{"error": "..."}` (see *Store
+//! errors* above). Cookies and the `X-Auth-Token` header behave identically, so
+//! a mobile client logs in by POSTing the same form with the JSON accept
+//! header, keeps the token, and sends it as `Authorization: Bearer` from then
+//! on.
 //!
 //! # OpenAPI
 //!
-//! With `openapi` (implies `axum`), `AxumRouter::openapi()` /
-//! `openapi_with()` build a document describing every route authery mounts,
-//! generated from the same route table and `schemars` derives the router is
-//! built from, so it can't drift from the code. `Document::convert` loads it
-//! into utoipa's or aide's types through serde. With `aide`,
-//! `AxumRouter::api_router()` registers every route through aide's typed
-//! routing so `finish_api` documents them alongside the app's own; see the
-//! README's *OpenAPI* section for the full examples.
+//! With `openapi` (implies `axum`), `AxumRouter::openapi()` / `openapi_with()`
+//! build a document describing every route authery mounts - the request
+//! bodies, query parameters, responses and security schemes those routes
+//! really use, generated from the same route table and `schemars` derives the
+//! router is built from, so it can't drift from the code.
+//!
+//! ## No OpenAPI (unchanged)
+//!
+//! The feature is opt-in and costs nothing when it's off; this is the same
+//! baseline setup as the *Basic example* above, unaffected by anything below:
+//!
+//! ```rust,ignore
+//! let routes = Routes::default().with_prefix("/auth");
+//! let auth = AutheryConfig::new(...)?;
+//!
+//! let app = axum::Router::new()
+//!     .route("/", axum::routing::get(index))
+//!     .merge(auth.router::<MyStore, AppState>())
+//!     .with_state(AppState { store: MyStore::new(), auth });
+//! ```
+//!
+//! ## Serving the neutral document
+//!
+//! ```rust,ignore
+//! use authery::openapi::OpenApiOptions;
+//!
+//! let auth = AutheryConfig::new(...)?.with_bearer_auth(true);
+//! let doc = std::sync::Arc::new(auth.openapi());
+//!
+//! let app = axum::Router::new()
+//!     .route("/openapi.json", axum::routing::get(move || async move { axum::Json(doc.to_json()) }))
+//!     .merge(auth.router::<MyStore, AppState>())
+//!     .with_state(AppState { store: MyStore::new(), auth });
+//! ```
+//!
+//! `openapi()` documents the API routes with draft 2020-12 schemas labelled
+//! `3.1.0`; the page-class routes are excluded - the HTML GETs, and the two
+//! POSTs that render a page directly (`user_totp_enroll`,
+//! `user_recovery_codes`). `openapi_with` takes options for everything else:
+//!
+//! ```rust,ignore
+//! use authery::openapi::OpenApiOptions;
+//! use schemars::generate::SchemaSettings;
+//!
+//! let doc = auth.openapi_with(
+//!     OpenApiOptions::default()
+//!         .with_pages(true)                                   // include the HTML page routes
+//!         .with_schema_settings(SchemaSettings::openapi3()),   // `nullable` flags, labelled `3.0.3`
+//! );
+//! ```
+//!
+//! ## With utoipa (`openapi` feature, no extra authery feature)
+//!
+//! ```rust,ignore
+//! #[derive(utoipa::OpenApi)]
+//! #[openapi(info(title = "My API"), paths(list_widgets))]
+//! struct ApiDoc;
+//!
+//! let mut doc = ApiDoc::openapi();
+//! doc.merge(auth.openapi().convert::<utoipa::openapi::OpenApi>()?);
+//! ```
+//!
+//! `convert` round-trips the document through serde into any type that
+//! deserializes an OpenAPI document - it works for `utoipa::openapi::OpenApi`
+//! and `aide::openapi::OpenApi` alike.
+//!
+//! ## With aide (`aide` feature)
+//!
+//! ```rust,ignore
+//! let mut api = aide::openapi::OpenApi::default();
+//!
+//! let app = aide::axum::ApiRouter::new()
+//!     .api_route(
+//!         "/widgets",
+//!         aide::axum::routing::get_with(list_widgets, |op| op.summary("List widgets")),
+//!     )
+//!     .merge(auth.api_router::<MyStore, AppState>())
+//!     .finish_api(&mut api)
+//!     .with_state(AppState { store: MyStore::new(), auth });
+//!
+//! let components = api.components.get_or_insert_with(Default::default);
+//! for (name, scheme) in auth.aide_security_schemes() {
+//!     components
+//!         .security_schemes
+//!         .insert(name, aide::openapi::ReferenceOr::Item(scheme));
+//! }
+//! ```
+//!
+//! `api_router` registers every authery route through aide's typed routing, so
+//! `finish_api` documents them alongside the app's own; schemas land in the
+//! app's `components` through aide's generator. aide collects security schemes
+//! from its own generator only, so authery's aren't inserted automatically -
+//! `aide_security_schemes()` returns `session_cookie` (and `bearer` when
+//! bearer auth is on) for the app to add after `finish_api`, as above.
+//!
+//! ## What's documented
+//!
+//! Every operation lists `500` and a `4XX` response, both `ApiError`
+//! (`{"error"}`) - the `4XX` is what a store's `PublicError` renders to (see
+//! *Store errors* above). Flow POSTs additionally list `303` (browsers), `200
+//! FlowResult` (`{"next", "message"?}`) and, when the step can be refused,
+//! `422 FlowError` (`{"error", "next"}`) for `Accept: application/json`. An
+//! operation that answers `401` without a session lists that too, as an
+//! `ApiError`. Request bodies document both
+//! `application/x-www-form-urlencoded` and `application/json`. With bearer
+//! auth on, session-establishing successes also document the `X-Auth-Token`
+//! response header - the MFA completion POSTs included, since they rotate the
+//! pending session into a real one; the flows that only initiate (the OAuth
+//! POSTs, the emailed-link POSTs) do not, their callbacks do.
+//!
+//! `components.securitySchemes` always has `session_cookie` (an `apiKey` in
+//! `cookie`, named after the configured session cookie); with bearer auth on
+//! it also has `bearer` (`http`, scheme `bearer`). User-scoped and
+//! MFA-completion endpoints list both as alternatives; public flow endpoints
+//! list none.
 //!
 //! # Sessions & bearer tokens
 //!

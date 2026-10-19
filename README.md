@@ -2,7 +2,16 @@
 
 [![Crates.io Version](https://img.shields.io/crates/v/authery.svg)](https://crates.io/crates/authery)
 [![docs.rs](https://img.shields.io/docsrs/authery)](https://docs.rs/authery)
-[![CI](https://github.com/StefanTerdell/userp/actions/workflows/ci.yml/badge.svg)](https://github.com/StefanTerdell/userp/actions/workflows/ci.yml)
+[![CI](https://github.com/StefanTerdell/authery/actions/workflows/ci.yml/badge.svg)](https://github.com/StefanTerdell/authery/actions/workflows/ci.yml)
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/StefanTerdell/authery/main/screenshots/login.png" alt="Sign-in page with password, one-time code, link and text tabs, plus OAuth and passkey options" width="32%">
+  <img src="https://raw.githubusercontent.com/StefanTerdell/authery/main/screenshots/mfa.png" alt="Second-factor step offering an authenticator code, passkey or recovery code" width="32%">
+  <img src="https://raw.githubusercontent.com/StefanTerdell/authery/main/screenshots/totp-enroll.png" alt="Authenticator app enrollment with QR code" width="32%">
+</p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/StefanTerdell/authery/main/screenshots/user.png" alt="Account page with sign-in methods, connections, sessions and security settings" width="97%">
+</p>
 
 <!-- cargo-rdme start -->
 

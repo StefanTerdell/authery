@@ -80,4 +80,4 @@ crate. Everything below is new relative to userp 0.0.x:
   like the other two ceremonies.
 - `with_cookie_layer` takes the pages renderer and login route (with `pages`).
 
-[Unreleased]: https://github.com/StefanTerdell/userp/commits/authery
+[Unreleased]: https://github.com/StefanTerdell/authery/commits/main
